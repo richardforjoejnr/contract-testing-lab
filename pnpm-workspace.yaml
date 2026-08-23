@@ -1,0 +1,10 @@
+packages:
+  - 'packages/*'
+
+# pnpm 10 blocks lifecycle scripts by default. These three need them: esbuild
+# and @swc/core unpack platform binaries, and Vitest will not start without
+# esbuild's. Pact ships its native core as optional per-platform packages
+# (@pact-foundation/pact-core-darwin-arm64 and friends), so it needs no script.
+onlyBuiltDependencies:
+  - esbuild
+  - '@swc/core'

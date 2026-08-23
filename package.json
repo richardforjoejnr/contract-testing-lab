@@ -1,0 +1,44 @@
+{
+  "name": "contract-testing-lab",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Consumer-driven HTTP pacts and MQTT message pacts in TypeScript, with can-i-deploy CI gating.",
+  "packageManager": "pnpm@10.32.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --parallel typecheck",
+
+    "test": "pnpm test:consumers && pnpm test:providers",
+    "test:consumers": "pnpm --filter \"./packages/consumer-*\" test",
+    "test:providers": "pnpm --filter \"./packages/provider-*\" test",
+
+    "pact:consumer:http": "pnpm --filter @lab/consumer-web test",
+    "pact:consumer:events": "pnpm --filter @lab/consumer-events test",
+    "pact:provider:http": "pnpm --filter @lab/provider-api test:pact",
+    "pact:provider:events": "pnpm --filter @lab/provider-events test:pact",
+
+    "broker:up": "docker compose up -d postgres broker && ./scripts/wait-for-broker.sh",
+    "broker:down": "docker compose down",
+    "broker:reset": "docker compose down -v && pnpm broker:up",
+    "mqtt:up": "docker compose up -d mosquitto",
+    "stack:up": "docker compose up -d && ./scripts/wait-for-broker.sh",
+    "stack:down": "docker compose down",
+
+    "pact:publish": "./scripts/publish-pacts.sh",
+    "pact:can-i-deploy": "./scripts/can-i-deploy.sh",
+    "pact:record-deployment": "./scripts/record-deployment.sh",
+
+    "loop": "./scripts/full-loop.sh",
+    "demo:brittle": "./scripts/demo-brittle-contract.sh",
+    "demo:mqtt": "./scripts/demo-mqtt-roundtrip.sh"
+  },
+  "devDependencies": {
+    "@pact-foundation/pact-cli": "18.1.1",
+    "@types/node": "22.20.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}
