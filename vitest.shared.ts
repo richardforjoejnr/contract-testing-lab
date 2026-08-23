@@ -17,6 +17,9 @@ import type { ViteUserConfig } from 'vitest/config';
  */
 export const pactRunnerDefaults = {
   environment: 'node',
+  // Pact's Rust core phones home with anonymous usage stats unless told not to.
+  // Opting a test suite out of network calls it did not ask for is just hygiene.
+  env: { PACT_DO_NOT_TRACK: 'true' },
   pool: 'forks',
   maxWorkers: 1,
   fileParallelism: false,

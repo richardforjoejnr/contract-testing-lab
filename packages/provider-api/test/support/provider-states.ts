@@ -1,7 +1,13 @@
-import type { StateHandlers } from '@pact-foundation/pact';
+import type { VerifierOptions } from '@pact-foundation/pact';
 
 import { CUSTOMER_1042, ORDERS_FOR_CUS_1042 } from '../../src/seed';
 import type { OrdersRepository } from '../../src/orders/orders.repository';
+
+// pact-js does not re-export `StateHandlers` from the package root, so derive
+// it from the options type that is exported. Better than reaching into
+// `@pact-foundation/pact/src/dsl/verifier/proxy/types`, which is not public API
+// and has moved between releases.
+type StateHandlers = NonNullable<VerifierOptions['stateHandlers']>;
 
 /**
  * Provider state handlers.
