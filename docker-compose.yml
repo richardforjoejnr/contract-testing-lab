@@ -1,0 +1,89 @@
+# Local contract-testing stack: Pact Broker + Postgres + Mosquitto.
+#
+#   pnpm broker:up   Postgres and the broker only (all the pact tooling needs)
+#   pnpm stack:up    the above plus Mosquitto (for the MQTT round-trip demo)
+#   pnpm stack:down  stop everything; add -v to drop the broker's data
+#
+# The broker is at http://localhost:9292 — pact / pact.
+
+name: contract-testing-lab
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pactbroker
+      POSTGRES_PASSWORD: pactbroker
+      POSTGRES_DB: pactbroker
+    volumes:
+      - broker-data:/var/lib/postgresql/data
+    healthcheck:
+      # The broker crashes on boot against a database that is not accepting
+      # connections yet, so this gate is load-bearing rather than decorative.
+      test: ['CMD-SHELL', 'pg_isready -U pactbroker -d pactbroker']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  broker:
+    # Pinned, not `latest`. A broker that silently upgrades under you turns an
+    # unrelated red build into a half-day of archaeology.
+    image: pactfoundation/pact-broker:2.142.0-pactbroker2.120.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '9292:9292'
+    environment:
+      PACT_BROKER_PORT: '9292'
+      PACT_BROKER_DATABASE_ADAPTER: postgres
+      PACT_BROKER_DATABASE_HOST: postgres
+      PACT_BROKER_DATABASE_NAME: pactbroker
+      PACT_BROKER_DATABASE_USERNAME: pactbroker
+      PACT_BROKER_DATABASE_PASSWORD: pactbroker
+
+      # Local credentials, checked in deliberately: there is nothing here worth
+      # protecting, and a broker you cannot log into is a broker nobody uses.
+      # A real deployment takes these from the secret store and, more
+      # importantly, turns off the public read below.
+      PACT_BROKER_BASIC_AUTH_USERNAME: pact
+      PACT_BROKER_BASIC_AUTH_PASSWORD: pact
+      PACT_BROKER_ALLOW_PUBLIC_READ: 'true'
+
+      PACT_BROKER_LOG_LEVEL: WARN
+      PACT_BROKER_SQL_LOG_LEVEL: ERROR
+      PACT_BROKER_PUBLIC_HEARTBEAT: 'true'
+
+      # The broker's own housekeeping. Without it the pact_versions table grows
+      # without bound — every push from every branch, forever — and after a few
+      # months `can-i-deploy` slows to the point where people route around the
+      # gate. Unglamorous, and the reason self-hosted brokers get abandoned.
+      PACT_BROKER_DATABASE_CLEAN_ENABLED: 'true'
+      PACT_BROKER_DATABASE_CLEAN_CRON_SCHEDULE: '0 3 * * *'
+      PACT_BROKER_DATABASE_CLEAN_KEEP_VERSION_SELECTORS: >-
+        [{"latest": true}, {"deployed": true}, {"released": true}, {"maxAge": 90}]
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'wget -q -O /dev/null http://localhost:9292/diagnostic/status/heartbeat || exit 1',
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    ports:
+      - '1883:1883'
+      - '9001:9001'
+    volumes:
+      - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'mosquitto_sub -h localhost -t healthcheck -E -W 2']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  broker-data:
