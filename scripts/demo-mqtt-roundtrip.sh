@@ -18,12 +18,17 @@ source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 cd "$REPO_ROOT"
 
+# 1883 is the MQTT default and is the port most likely to be already taken.
+# Override with MQTT_PORT=1884 pnpm demo:mqtt
+export MQTT_PORT="${MQTT_PORT:-1883}"
+export MQTT_URL="${MQTT_URL:-mqtt://localhost:$MQTT_PORT}"
+
 log 'Starting Mosquitto'
 docker compose up -d mosquitto
 
-printf 'Waiting for Mosquitto on localhost:1883 '
+printf 'Waiting for Mosquitto on localhost:%s ' "$MQTT_PORT"
 for _ in $(seq 1 30); do
-  if nc -z localhost 1883 2>/dev/null; then break; fi
+  if nc -z localhost "$MQTT_PORT" 2>/dev/null; then break; fi
   printf '.'
   sleep 1
 done

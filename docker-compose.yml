@@ -75,8 +75,12 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2.0
     ports:
-      - '1883:1883'
-      - '9001:9001'
+      # Host ports are overridable because 1883 is the MQTT default and is
+      # therefore the port most likely to already be taken — usually by another
+      # project's broker. Set MQTT_PORT to move it; the demo scripts and the
+      # MQTT_URL default both follow.
+      - '${MQTT_PORT:-1883}:1883'
+      - '${MQTT_WS_PORT:-9001}:9001'
     volumes:
       - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     healthcheck:
