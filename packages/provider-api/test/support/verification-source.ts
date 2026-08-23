@@ -25,30 +25,36 @@ export const CONSUMER = 'web-dashboard';
  * broken the consumer version that is live in production. Only the broker knows
  * that.
  */
+/**
+ * The pact file the consumer suite just wrote.
+ *
+ * Demos verify against a file directly rather than through `pactSource()`,
+ * because in broker mode `pactSource()` would publish their (deliberately
+ * failing) results and poison `can-i-deploy` for everyone.
+ */
+export function localPactFile(): string {
+  const local = resolve(REPO_ROOT, 'pacts', `${CONSUMER}-${PROVIDER}.json`);
+
+  if (!existsSync(local)) {
+    throw new Error(
+      `No local pact at ${local}. Run the consumer suite first ` +
+        `(pnpm test:consumers).`,
+    );
+  }
+
+  return local;
+}
+
 export function pactSource(): Record<string, unknown> {
   const brokerUrl = process.env['PACT_BROKER_BASE_URL'];
 
-  // Escape hatch for verifying one specific file — used by the brittle-contract
-  // demo, and handy for reproducing a broker failure locally.
+  // Escape hatch for verifying one specific file — handy for reproducing a
+  // broker failure locally.
   const override = process.env['PACT_FILE'];
   if (override) return { pactUrls: [resolve(override)] };
 
   if (!brokerUrl) {
-    const local = resolve(
-      REPO_ROOT,
-      'pacts',
-      `${CONSUMER}-${PROVIDER}.json`,
-    );
-
-    if (!existsSync(local)) {
-      throw new Error(
-        `No broker configured and no local pact at ${local}.\n` +
-          `Run the consumer suite first (pnpm test:consumers), or set ` +
-          `PACT_BROKER_BASE_URL to verify against a broker.`,
-      );
-    }
-
-    return { pactUrls: [local] };
+    return { pactUrls: [localPactFile()] };
   }
 
   return {

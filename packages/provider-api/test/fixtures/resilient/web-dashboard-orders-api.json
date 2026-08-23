@@ -1,0 +1,149 @@
+{
+  "_comment": [
+    "THE SAME CONTRACT, EXPRESSED WITH MATCHERS.",
+    "",
+    "Byte-for-byte identical to ../over-specified/web-dashboard-orders-api.json",
+    "apart from the `matchingRules` block below. The example values are still",
+    "the stale ones — 4750, 'Priya N.', a timestamp with no milliseconds — and",
+    "verification passes anyway, because the contract now states which parts of",
+    "those examples it actually depends on.",
+    "",
+    "Read the matching rules as a list of the consumer's real requirements:",
+    "  id           must look like an order id (it builds deep links from it)",
+    "  status       must be one of the five it knows how to render",
+    "  placedAt     must be an ISO 8601 instant (it formats it)",
+    "  totalPence   must be a whole number (it divides by 100)",
+    "  everything else: must be present, and of the right type",
+    "",
+    "Nothing was loosened that mattered. What went away was the accidental",
+    "coupling to the provider's test data."
+  ],
+  "consumer": { "name": "web-dashboard" },
+  "provider": { "name": "orders-api" },
+  "metadata": {
+    "pactSpecification": { "version": "4.0" }
+  },
+  "interactions": [
+    {
+      "type": "Synchronous/HTTP",
+      "description": "a request for order ord-8f3a91",
+      "pending": false,
+      "providerStates": [
+        { "name": "an order ord-8f3a91 exists for customer cus-1042" }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/orders/ord-8f3a91",
+        "headers": { "Accept": ["application/json"] }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": ["application/json; charset=utf-8"] },
+        "body": {
+          "contentType": "application/json",
+          "encoded": false,
+          "content": {
+            "id": "ord-8f3a91",
+            "status": "PICKING",
+            "placedAt": "2026-08-19T09:14:02Z",
+            "totalPence": 4750,
+            "itemCount": 3,
+            "storeId": "store-0042",
+            "customer": {
+              "id": "cus-1042",
+              "displayName": "Priya N."
+            },
+            "lines": [
+              {
+                "sku": "SKU-90887",
+                "description": "Ground coffee, 227g",
+                "quantity": 2,
+                "unitPricePence": 549
+              },
+              {
+                "sku": "SKU-77120",
+                "description": "Oat milk, 1L",
+                "quantity": 1,
+                "unitPricePence": 180
+              }
+            ]
+          }
+        },
+        "matchingRules": {
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                { "match": "regex", "regex": "^application/json(;.*)?$" }
+              ]
+            }
+          },
+          "body": {
+            "$.id": {
+              "combine": "AND",
+              "matchers": [{ "match": "regex", "regex": "^ord-[0-9a-f]{6}$" }]
+            },
+            "$.status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^(PLACED|PICKING|READY|COLLECTED|CANCELLED)$"
+                }
+              ]
+            },
+            "$.placedAt": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^\\d{4}-[01]\\d-[0-3]\\dT[0-2]\\d:[0-5]\\d:[0-5]\\d(\\.\\d+)?(Z|[+-][0-2]\\d:[0-5]\\d)$"
+                }
+              ]
+            },
+            "$.totalPence": {
+              "combine": "AND",
+              "matchers": [{ "match": "integer" }]
+            },
+            "$.itemCount": {
+              "combine": "AND",
+              "matchers": [{ "match": "integer" }]
+            },
+            "$.storeId": {
+              "combine": "AND",
+              "matchers": [{ "match": "type" }]
+            },
+            "$.customer.id": {
+              "combine": "AND",
+              "matchers": [{ "match": "type" }]
+            },
+            "$.customer.displayName": {
+              "combine": "AND",
+              "matchers": [{ "match": "type" }]
+            },
+            "$.lines": {
+              "combine": "AND",
+              "matchers": [{ "match": "type", "min": 1 }]
+            },
+            "$.lines[*].sku": {
+              "combine": "AND",
+              "matchers": [{ "match": "type" }]
+            },
+            "$.lines[*].description": {
+              "combine": "AND",
+              "matchers": [{ "match": "type" }]
+            },
+            "$.lines[*].quantity": {
+              "combine": "AND",
+              "matchers": [{ "match": "integer" }]
+            },
+            "$.lines[*].unitPricePence": {
+              "combine": "AND",
+              "matchers": [{ "match": "integer" }]
+            }
+          }
+        }
+      }
+    }
+  ]
+}
