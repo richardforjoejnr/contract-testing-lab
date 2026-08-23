@@ -1,0 +1,118 @@
+# The whole loop, against a real broker, with no secrets required.
+#
+# The other three workflows in this directory are the shape a real pipeline
+# takes: separate consumer and provider builds, talking to a long-lived broker,
+# gated by can-i-deploy. They are the honest answer to "how would you run this
+# at work" — and they are also, necessarily, skipped on a fork, because a fork
+# has no broker to talk to.
+#
+# A portfolio repo whose CI badge is grey or red argues against itself. So this
+# workflow stands up a throwaway Postgres-backed broker as a service container
+# and runs the entire sequence inside one job: consumer tests → publish →
+# provider verification → can-i-deploy → deploy → record-deployment.
+#
+# The broker dies with the job, which is exactly why this cannot replace the
+# split workflows: an ephemeral broker only ever knows about this one commit,
+# so its can-i-deploy cannot tell you whether you have broken the consumer
+# version that has been in production for a month. That question needs a broker
+# that outlives the build. See docs/adr/005-ephemeral-broker-in-ci.md.
+
+name: contract tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: contract-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-loop:
+    name: consumer → publish → verify → can-i-deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: pactbroker
+          POSTGRES_PASSWORD: pactbroker
+          POSTGRES_DB: pactbroker
+        options: >-
+          --health-cmd "pg_isready -U pactbroker -d pactbroker"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+
+      broker:
+        image: pactfoundation/pact-broker:2.142.0-pactbroker2.120.0
+        env:
+          PACT_BROKER_PORT: '9292'
+          PACT_BROKER_DATABASE_ADAPTER: postgres
+          PACT_BROKER_DATABASE_HOST: postgres
+          PACT_BROKER_DATABASE_NAME: pactbroker
+          PACT_BROKER_DATABASE_USERNAME: pactbroker
+          PACT_BROKER_DATABASE_PASSWORD: pactbroker
+          PACT_BROKER_BASIC_AUTH_USERNAME: pact
+          PACT_BROKER_BASIC_AUTH_PASSWORD: pact
+          PACT_BROKER_LOG_LEVEL: WARN
+          PACT_BROKER_SQL_LOG_LEVEL: ERROR
+          PACT_BROKER_PUBLIC_HEARTBEAT: 'true'
+        ports:
+          - 9292:9292
+        options: >-
+          --health-cmd "wget -q -O /dev/null http://localhost:9292/diagnostic/status/heartbeat || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+
+    env:
+      PACT_BROKER_BASE_URL: http://localhost:9292
+      PACT_BROKER_USERNAME: pact
+      PACT_BROKER_PASSWORD: pact
+      PACT_DO_NOT_TRACK: 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # scripts/_common.sh derives the participant version from the commit
+          # SHA, and full-loop.sh needs the branch name. A shallow clone has
+          # both, but fetch-depth 0 keeps `git rev-parse` honest if the scripts
+          # ever start looking further back.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Full contract loop
+        run: pnpm loop
+
+      # Run it a second time. The first pass finds an empty environment and
+      # takes the documented first-deployment path; only after
+      # record-deployment has run does can-i-deploy have anything to reason
+      # about. Running twice proves the gate actually engages, rather than
+      # proving we can skip it.
+      - name: Full contract loop, with the gate live
+        run: pnpm loop
+
+      - name: Publish pacts as a build artefact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacts
+          path: pacts/
+          if-no-files-found: warn
+          retention-days: 14
