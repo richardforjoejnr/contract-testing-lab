@@ -67,36 +67,36 @@ describe('web-dashboard → orders-api', () => {
         })
         .willRespondWith(200, (builder) => {
           builder.headers({ 'Content-Type': JSON_CONTENT_TYPE });
+          // Written out longhand, exactly as orders-api returns it today.
+          //
+          // This felt like the careful thing to do. Every field is pinned to a
+          // real observed value, so the contract is an exact description of the
+          // response — no hand-waving, nothing left loose. It passes.
           builder.jsonBody({
-            // Shape matters, value does not — except where it does.
-            id: regex(ORDER_ID, 'ord-8f3a91'),
-            status: regex(KNOWN_STATUS, 'PICKING'),
-            placedAt: iso8601DateTimeWithMillis('2026-08-19T09:14:02.000Z'),
-            // integer(), not like(): a total that arrives as 47.5 would render
-            // as "£0.48" after our pence-to-pounds division. Type is semantics.
-            //
-            // 5100 is also deliberately NOT what the provider seeds for this
-            // order (it seeds 1278). Verification still passes, which is the
-            // proof that the matcher is carrying the contract rather than the
-            // two sides having quietly agreed on a magic number.
-            totalPence: integer(5100),
-            itemCount: integer(3),
-            storeId: like('store-0042'),
+            id: 'ord-8f3a91',
+            status: 'PICKING',
+            placedAt: '2026-08-19T09:14:02.000Z',
+            totalPence: 1278,
+            itemCount: 3,
+            storeId: 'store-0042',
             customer: {
-              id: like('cus-1042'),
-              displayName: like('P. Nandakumar'),
+              id: 'cus-1042',
+              displayName: 'P. Nandakumar',
             },
-            // The dashboard renders every line, so it needs at least one, and
-            // every element must carry the four fields below.
-            lines: eachLike(
+            lines: [
               {
-                sku: like('SKU-77120'),
-                description: like('Oat milk, 1L'),
-                quantity: integer(2),
-                unitPricePence: integer(180),
+                sku: 'SKU-90887',
+                description: 'Ground coffee, 227g',
+                quantity: 2,
+                unitPricePence: 549,
               },
-              1,
-            ),
+              {
+                sku: 'SKU-77120',
+                description: 'Oat milk, 1L',
+                quantity: 1,
+                unitPricePence: 180,
+              },
+            ],
           });
         })
         .executeTest(async (mockServer) => {
@@ -105,10 +105,10 @@ describe('web-dashboard → orders-api', () => {
 
           expect(order.id).toBe('ord-8f3a91');
           expect(order.status).toBe('PICKING');
-          expect(order.totalPence).toBe(5100);
+          expect(order.totalPence).toBe(1278);
           expect(order.customer.displayName).toBe('P. Nandakumar');
-          expect(order.lines).toHaveLength(1);
-          expect(order.lines[0]?.sku).toBe('SKU-77120');
+          expect(order.lines).toHaveLength(2);
+          expect(order.lines[0]?.sku).toBe('SKU-90887');
         });
     });
 
