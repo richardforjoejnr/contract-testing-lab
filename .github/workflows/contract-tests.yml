@@ -107,7 +107,7 @@ jobs:
       - name: Wait for broker
         run: ./scripts/wait-for-broker.sh
 
-      - name: Full contract loop
+      - name: 'Pass 1 — bootstrap: nothing deployed yet, gate has no question to answer'
         run: pnpm loop
 
       # Run it a second time. The first pass finds an empty environment and
@@ -115,8 +115,35 @@ jobs:
       # record-deployment has run does can-i-deploy have anything to reason
       # about. Running twice proves the gate actually engages, rather than
       # proving we can skip it.
-      - name: Full contract loop, with the gate live
+      - name: 'Pass 2 — gate live: can-i-deploy checked against recorded deployments'
         run: pnpm loop
+
+      - name: Summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Contract tests
+
+          The full loop, run twice against a throwaway Postgres-backed Pact Broker:
+
+          `consumer tests → publish → provider verification → can-i-deploy → deploy → record-deployment`
+
+          | Pass | What it proves |
+          | --- | --- |
+          | 1 | Bootstrap. `production` is empty, so the gate has nothing to compare against and says so explicitly rather than being quietly skipped. |
+          | 2 | The gate is live. Pass 1's `record-deployment` gave it real versions to reason about, so a "yes" here is a real answer. |
+
+          ### Participants
+
+          | Integration | Consumer | Provider | Style |
+          | --- | --- | --- | --- |
+          | Orders | `web-dashboard` | `orders-api` | HTTP |
+          | Telemetry | `telemetry-processor` | `device-gateway` | MQTT message pact |
+
+          Per-package test counts are in the step logs. Vitest's own job-summary
+          block is turned off in `vitest.shared.ts`: it has no package name in
+          its heading, so eight identical green boxes told you nothing.
+          EOF
 
       - name: Publish pacts as a build artefact
         if: always()
