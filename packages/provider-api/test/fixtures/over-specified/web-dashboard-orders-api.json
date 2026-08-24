@@ -8,7 +8,7 @@
     "",
     "It fails today against three provider changes that break nothing:",
     "  - totalPence 4750 -> 1278   (the seed basket was re-costed)",
-    "  - displayName 'Priya N.' -> 'P. Nandakumar'  (fixture tidy-up)",
+    "  - displayName 'Priya N.' -> 'Priya Nandakumar'  (fixture tidy-up)",
     "  - placedAt gained millisecond precision when the column type changed",
     "",
     "Not one of those is a breaking change for the dashboard. All three break",
