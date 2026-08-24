@@ -53,6 +53,25 @@ export function pactSource(): Record<string, unknown> {
   const override = process.env['PACT_FILE'];
   if (override) return { pactUrls: [resolve(override)] };
 
+  // Webhook-driven verification. When a consumer publishes a contract whose
+  // content has changed, the broker fires `contract_requiring_verification_published`
+  // carrying the URL of that one pact, and the provider's pipeline verifies
+  // exactly it.
+  //
+  // This is the difference between contract testing that runs on the provider's
+  // schedule and contract testing that runs on the *consumer's*. Without the
+  // webhook, a consumer can publish a breaking expectation on Monday and find
+  // out on Thursday when the provider next builds. With it, feedback arrives in
+  // minutes, and it arrives in the pipeline of the team who can act on it.
+  const changedPact = process.env['PACT_URL'];
+  if (changedPact && brokerUrl) {
+    return {
+      pactUrls: [changedPact],
+      ...credentials(),
+      ...buildProvenance(),
+    };
+  }
+
   if (!brokerUrl) {
     return { pactUrls: [localPactFile()] };
   }
@@ -81,6 +100,20 @@ export function pactSource(): Record<string, unknown> {
     enablePending: true,
     includeWipPactsSince: process.env['PACT_WIP_SINCE'] ?? '2026-01-01',
 
+    ...buildProvenance(),
+  };
+}
+
+/**
+ * What this build is, so the broker can attribute the verification result.
+ *
+ * `providerVersion` is the SHA, `providerVersionBranch` lets consumer version
+ * selectors line branches up, and `buildUrl` is the one that pays for itself:
+ * when can-i-deploy blocks a release six weeks from now, it links straight to
+ * the run that produced the failing result instead of leaving someone to guess.
+ */
+function buildProvenance(): Record<string, unknown> {
+  return {
     providerVersion: providerVersion(),
     providerVersionBranch: gitBranch(),
     publishVerificationResult: process.env['CI'] === 'true',

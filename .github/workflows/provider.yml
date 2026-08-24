@@ -1,0 +1,103 @@
+# Provider build: prove orders-api and device-gateway still honour every
+# contract their consumers hold.
+#
+# Note the `repository_dispatch` trigger. That is the one that turns contract
+# testing from a scheduled report into a feedback loop: the broker fires a
+# `contract_requiring_verification_published` webhook the moment a consumer
+# publishes a changed contract, and the provider verifies it within minutes —
+# in the provider's own pipeline, where the people who can fix it will see it.
+#
+# Without it, a consumer publishes a breaking expectation on Monday and finds
+# out on Thursday when the provider next happens to build. Teams in that
+# position conclude contract testing is slow and noisy, and they are right.
+#
+# Set up the webhook in the broker with:
+#   pact-broker create-webhook \
+#     https://api.github.com/repos/<owner>/<repo>/dispatches \
+#     --request POST \
+#     --header 'Accept: application/vnd.github+json' \
+#     --header 'Authorization: Bearer <token>' \
+#     --data '{"event_type":"contract_requiring_verification_published",
+#              "client_payload":{"pactUrl":"${pactbroker.pactUrl}"}}' \
+#     --contract-requiring-verification-published
+
+name: provider
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [contract_requiring_verification_published]
+
+concurrency:
+  group: provider-${{ github.ref }}-${{ github.event.client_payload.pactUrl || 'default' }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: orders-api + device-gateway
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      PACT_BROKER_BASE_URL: ${{ vars.PACT_BROKER_BASE_URL }}
+      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_USERNAME: ${{ secrets.PACT_BROKER_USERNAME }}
+      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+      # Present only on a webhook-triggered run. verification-source.ts reads it
+      # and verifies that single pact instead of querying by selector.
+      PACT_URL: ${{ github.event.client_payload.pactUrl }}
+      PACT_DO_NOT_TRACK: 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A webhook run has no branch context of its own, so verify whatever
+          # the default branch currently is — that is the deployed-ish truth the
+          # consumer's new contract needs to be checked against.
+          ref: ${{ github.event_name == 'repository_dispatch' && 'main' || github.ref }}
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Without a broker there is nothing to pull, so generate the contracts
+      # locally first. Weaker than the real thing — it only ever sees this
+      # commit's contract, never the version running in production — but it
+      # keeps the workflow meaningful on a fork.
+      - name: Generate contracts locally
+        if: ${{ vars.PACT_BROKER_BASE_URL == '' }}
+        run: pnpm test:consumers
+
+      - name: Provider verification
+        run: pnpm test:providers
+        env:
+          # Publishing results is what makes can-i-deploy possible. A
+          # verification nobody records is a test, not a control.
+          CI: ${{ vars.PACT_BROKER_BASE_URL != '' && 'true' || 'false' }}
+
+      - name: Explain the skip
+        if: ${{ vars.PACT_BROKER_BASE_URL == '' }}
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ### Verified against local contracts, not the broker
+
+          No `PACT_BROKER_BASE_URL` repository variable is set, so this run
+          verified the contracts generated from this same commit, and published
+          no results.
+
+          What that cannot tell you: whether this provider version still
+          satisfies the consumer version currently in production. Only a broker
+          that outlives the build knows about that version.
+          EOF
