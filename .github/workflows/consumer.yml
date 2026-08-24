@@ -1,0 +1,90 @@
+# Consumer build: generate contracts, then publish them.
+#
+# This is the shape a real consumer pipeline takes. It runs on every push,
+# because the contract is an output of the consumer's own test suite — not a
+# separate ceremony someone remembers to perform.
+#
+# The broker steps are gated on the `PACT_BROKER_BASE_URL` repository variable.
+# Set it (Settings → Secrets and variables → Actions → Variables) and this
+# becomes a live pipeline against your broker; leave it unset and the contract
+# tests still run, with the pacts kept as build artefacts instead. Forks get the
+# second behaviour, which is why they stay green.
+
+name: consumer
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: consumer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: web-dashboard + telemetry-processor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      PACT_BROKER_BASE_URL: ${{ vars.PACT_BROKER_BASE_URL }}
+      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_USERNAME: ${{ secrets.PACT_BROKER_USERNAME }}
+      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+      PACT_DO_NOT_TRACK: 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Always runs, broker or no broker. A consumer pact test is a unit test of
+      # the client module that happens to emit a contract as a side effect; if
+      # it only ran when a broker was reachable, it would rot.
+      - name: Consumer contract tests
+        run: pnpm test:consumers
+
+      - name: Publish pacts to the broker
+        if: ${{ vars.PACT_BROKER_BASE_URL != '' }}
+        run: ./scripts/publish-pacts.sh
+
+      # No broker configured — keep the contracts as artefacts so the run is
+      # still useful, and so a reviewer can download and diff them against the
+      # previous build.
+      - name: Upload pacts as artefacts
+        if: ${{ vars.PACT_BROKER_BASE_URL == '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacts-${{ github.sha }}
+          path: pacts/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Explain the skip
+        if: ${{ vars.PACT_BROKER_BASE_URL == '' }}
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ### Pacts not published
+
+          No `PACT_BROKER_BASE_URL` repository variable is set, so the contracts
+          were uploaded as an artefact instead of published.
+
+          The contract tests themselves ran and passed — what is missing is the
+          broker, and therefore the cross-team feedback loop and the
+          `can-i-deploy` gate. See `.github/workflows/contract-tests.yml` for the
+          same sequence run end to end against a throwaway broker.
+          EOF

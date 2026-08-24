@@ -3,7 +3,9 @@ import type { OrdersRepository } from './orders/orders.repository';
 
 export const CUSTOMER_1042: Customer = {
   id: 'cus-1042',
-  displayName: 'P. Nandakumar',
+  // Support asked us to show customers' full names in the ops tooling rather
+  // than an initial, so the seed fixture follows suit.
+  displayName: 'Priya Nandakumar',
   email: 'p.nandakumar@example.invalid',
   phone: '+44 7700 900123',
   marketingOptIn: false,

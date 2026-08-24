@@ -1,0 +1,120 @@
+# The deployment gate.
+#
+# This workflow is the whole argument for contract testing as an engineering
+# control rather than a testing technique. Everything before it produces
+# evidence; this is the step that refuses to ship when the evidence says no.
+#
+# The question is not "did the tests pass on my branch". It is: given every
+# version of every participant currently running in <environment>, is THIS
+# version safe to put next to them? A provider whose own suite is green can
+# still be fatal to the consumer version that has been in production for three
+# weeks, and nothing in the provider's repository knows that. The broker does.
+#
+# Deliberately separate from the provider workflow. Verification answers "are we
+# compatible"; deploying answers "should this go out now" — different questions,
+# different triggers, and in a real org often different permissions.
+
+name: can-i-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to check against
+        type: choice
+        options: [production, staging]
+        default: production
+      participant:
+        description: Single participant to check (blank = all four)
+        type: string
+        default: ''
+  # Chained off the provider build so the gate runs against fresh verification
+  # results rather than whatever happened to be in the broker this morning.
+  workflow_run:
+    workflows: [provider]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: can-i-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: can-i-deploy → ${{ inputs.environment || 'production' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # No broker means no gate. Being explicit about that is the point: a gate
+    # that silently passes when it cannot reach its source of truth is worse
+    # than no gate, because people believe it.
+    if: >-
+      ${{ vars.PACT_BROKER_BASE_URL != '' &&
+          (github.event_name == 'workflow_dispatch' ||
+           github.event.workflow_run.conclusion == 'success') }}
+
+    env:
+      PACT_BROKER_BASE_URL: ${{ vars.PACT_BROKER_BASE_URL }}
+      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+      PACT_BROKER_USERNAME: ${{ secrets.PACT_BROKER_USERNAME }}
+      PACT_BROKER_PASSWORD: ${{ secrets.PACT_BROKER_PASSWORD }}
+      ENVIRONMENT: ${{ inputs.environment || 'production' }}
+      PACT_DO_NOT_TRACK: 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Ensure environments exist
+        run: ./scripts/create-environments.sh
+
+      # The gate. Non-zero exit stops the job, and therefore the deploy below.
+      - name: can-i-deploy
+        run: ./scripts/can-i-deploy.sh "${{ inputs.participant }}" "$ENVIRONMENT"
+
+      - name: Deploy
+        run: |
+          echo "Deploying $(git rev-parse --short=12 HEAD) to $ENVIRONMENT"
+          echo "(mock — this repo has nothing to deploy)"
+
+      # Only after a successful deploy. Recording it beforehand would tell the
+      # broker something untrue the moment a deploy fails, and every later
+      # can-i-deploy would reason from that lie.
+      #
+      # Skipping this step entirely is the most common way a working setup
+      # rots: can-i-deploy quietly stops having anything to compare against.
+      - name: Record deployments
+        run: |
+          for participant in web-dashboard telemetry-processor orders-api device-gateway; do
+            ./scripts/record-deployment.sh "$participant" "$ENVIRONMENT"
+          done
+
+  explain-skip:
+    name: gate skipped
+    runs-on: ubuntu-latest
+    if: ${{ vars.PACT_BROKER_BASE_URL == '' }}
+    steps:
+      - name: Explain
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ### No deployment gate on this repository
+
+          `can-i-deploy` needs a broker that outlives the build, and no
+          `PACT_BROKER_BASE_URL` repository variable is set.
+
+          To see the gate actually engage — including it blocking — run
+          `pnpm broker:up && pnpm loop` locally, or look at the
+          `contract tests` workflow, which runs the full sequence twice against
+          a throwaway broker so the second pass has recorded deployments to
+          reason about.
+          EOF

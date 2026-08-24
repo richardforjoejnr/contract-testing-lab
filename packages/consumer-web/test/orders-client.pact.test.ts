@@ -78,7 +78,9 @@ describe('web-dashboard → orders-api', () => {
             // 5100 is also deliberately NOT what the provider seeds for this
             // order (it seeds 1278). Verification still passes, which is the
             // proof that the matcher is carrying the contract rather than the
-            // two sides having quietly agreed on a magic number.
+            // two sides having quietly agreed on a magic number. Same reason
+            // displayName below still says 'P. Nandakumar' when the provider
+            // now returns 'Priya Nandakumar' — see the previous two commits.
             totalPence: integer(5100),
             itemCount: integer(3),
             storeId: like('store-0042'),
