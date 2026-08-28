@@ -49,8 +49,7 @@ environment_is_empty() {
         --environment "$ENVIRONMENT" \
         --output json \
         --broker-base-url "$PACT_BROKER_BASE_URL" \
-        --broker-username "$PACT_BROKER_USERNAME" \
-        --broker-password "$PACT_BROKER_PASSWORD" 2>/dev/null || echo '[]'
+        "${BROKER_AUTH[@]}" 2>/dev/null || echo '[]'
     )"
     if [[ -n "$deployed" && "$deployed" != '[]' ]]; then
       return 1
@@ -74,8 +73,7 @@ check() {
     --retry-while-unknown 6 \
     --retry-interval 5 \
     --broker-base-url "$PACT_BROKER_BASE_URL" \
-    --broker-username "$PACT_BROKER_USERNAME" \
-    --broker-password "$PACT_BROKER_PASSWORD"
+    "${BROKER_AUTH[@]}"
 }
 
 if environment_is_empty; then

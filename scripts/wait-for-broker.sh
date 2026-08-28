@@ -14,7 +14,8 @@ deadline=$(( $(date +%s) + TIMEOUT_SECONDS ))
 
 printf 'Waiting for Pact Broker at %s ' "$PACT_BROKER_BASE_URL"
 
-until curl -sf "$PACT_BROKER_BASE_URL/diagnostic/status/heartbeat" >/dev/null 2>&1; do
+until curl -sf "${BROKER_CURL_AUTH[@]}" \
+  "$PACT_BROKER_BASE_URL/diagnostic/status/heartbeat" >/dev/null 2>&1; do
   if [[ $(date +%s) -ge $deadline ]]; then
     printf '\n'
     echo "Timed out after ${TIMEOUT_SECONDS}s." >&2
