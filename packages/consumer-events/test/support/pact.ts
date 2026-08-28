@@ -17,3 +17,5 @@ export const PACT_DIR =
  */
 export const NORMAL_TELEMETRY = 'device telemetry v1, no active faults';
 export const FAULTED_TELEMETRY = 'device telemetry v1, critical fault raised';
+export const DEGRADED_TELEMETRY =
+  'device telemetry v1, warning fault on a degraded link';

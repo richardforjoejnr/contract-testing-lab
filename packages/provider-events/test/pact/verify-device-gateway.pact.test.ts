@@ -1,7 +1,11 @@
 import { Verifier, providerWithMetadata } from '@pact-foundation/pact';
 import { describe, it } from 'vitest';
 
-import { CRITICAL_READING, NORMAL_READING } from '../../src/readings.js';
+import {
+  CRITICAL_READING,
+  DEGRADED_READING,
+  NORMAL_READING,
+} from '../../src/readings.js';
 import { buildTelemetryEvent } from '../../src/telemetry-event.js';
 import { TRANSPORT_METADATA } from '../support/transport-metadata.js';
 import { PROVIDER, pactSource } from '../support/verification-source.js';
@@ -44,6 +48,11 @@ describe('device-gateway honours the telemetry-processor contract', () => {
           () => buildTelemetryEvent(CRITICAL_READING),
           TRANSPORT_METADATA,
         ),
+        'device telemetry v1, warning fault on a degraded link':
+          providerWithMetadata(
+            () => buildTelemetryEvent(DEGRADED_READING),
+            TRANSPORT_METADATA,
+          ),
       },
 
       // Provider states for messages work exactly as they do over HTTP: they
@@ -55,6 +64,8 @@ describe('device-gateway honours the telemetry-processor contract', () => {
       stateHandlers: {
         'a controller reporting normal telemetry': async () => undefined,
         'a controller reporting a critical fault on low battery': async () =>
+          undefined,
+        'a controller on a degraded link reporting a warning fault': async () =>
           undefined,
       },
 
