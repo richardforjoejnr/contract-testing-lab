@@ -25,7 +25,6 @@ pact_broker publish "$PACT_DIR" \
   --consumer-app-version "$VERSION" \
   --branch "$BRANCH" \
   --broker-base-url "$PACT_BROKER_BASE_URL" \
-  --broker-username "$PACT_BROKER_USERNAME" \
-  --broker-password "$PACT_BROKER_PASSWORD"
+  "${BROKER_AUTH[@]}"
 
 printf '\n\033[32m✓\033[0m Published. Browse them at %s\n' "$PACT_BROKER_BASE_URL"
