@@ -72,12 +72,20 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      # Without a broker there is nothing to pull, so generate the contracts
-      # locally first. Weaker than the real thing — it only ever sees this
-      # commit's contract, never the version running in production — but it
-      # keeps the workflow meaningful on a fork.
+      # Runs unconditionally, for two unrelated reasons.
+      #
+      # Without a broker there is nothing to pull, so these locally generated
+      # contracts are all the verification step has. Weaker than the real thing
+      # — it only ever sees this commit's contract, never the version running
+      # in production — but it keeps the workflow meaningful on a fork.
+      #
+      # With a broker, test/pact ignores these and pulls from the broker. But
+      # `test` is a plain `vitest run`, so it also picks up test/demos, and the
+      # drift demo reads pacts/ from disk on purpose: it mutates a real pact
+      # file to simulate a provider changing shape. pacts/ is gitignored, so
+      # gating this step on "no broker" left those four tests with nothing to
+      # read the moment a broker was configured.
       - name: Generate contracts locally
-        if: ${{ vars.PACT_BROKER_BASE_URL == '' }}
         run: pnpm test:consumers
 
       - name: Provider verification
