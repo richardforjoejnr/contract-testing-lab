@@ -26,5 +26,4 @@ pact_broker record-deployment \
   --version "$VERSION" \
   --environment "$ENVIRONMENT" \
   --broker-base-url "$PACT_BROKER_BASE_URL" \
-  --broker-username "$PACT_BROKER_USERNAME" \
-  --broker-password "$PACT_BROKER_PASSWORD"
+  "${BROKER_AUTH[@]}"

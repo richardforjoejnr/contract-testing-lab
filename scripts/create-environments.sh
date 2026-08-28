@@ -12,8 +12,7 @@ require_broker
 
 existing="$(pact_broker list-environments \
   --broker-base-url "$PACT_BROKER_BASE_URL" \
-  --broker-username "$PACT_BROKER_USERNAME" \
-  --broker-password "$PACT_BROKER_PASSWORD" 2>/dev/null || true)"
+  "${BROKER_AUTH[@]}" 2>/dev/null || true)"
 
 for env in staging production; do
   if grep -qw "$env" <<<"$existing"; then
@@ -27,6 +26,5 @@ for env in staging production; do
     --display-name "$env" \
     $([[ "$env" == 'production' ]] && echo '--production') \
     --broker-base-url "$PACT_BROKER_BASE_URL" \
-    --broker-username "$PACT_BROKER_USERNAME" \
-    --broker-password "$PACT_BROKER_PASSWORD"
+    "${BROKER_AUTH[@]}"
 done
