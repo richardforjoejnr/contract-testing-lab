@@ -64,5 +64,19 @@ export function buildStateHandlers(
       fresh();
       return undefined;
     },
+
+    'customer cus-9001 has no orders': async () => {
+      // No seeding beyond the reset, and cus-9001 is deliberately not the
+      // seeded customer. The provider has to answer for someone it has never
+      // heard of — a new sign-up looking at their orders page before they have
+      // bought anything.
+      //
+      // Like 'no order exists with id ord-000000', the value here is in what
+      // is absent. An empty result is a shape the provider has to get right
+      // (`{ "orders": [] }`, not null, not a 404), and it is the shape least
+      // likely to have been looked at by hand.
+      fresh();
+      return undefined;
+    },
   };
 }
