@@ -52,11 +52,17 @@ pnpm broker:down    # stop; add -v via broker:reset to drop the data
 2. **Publish** to the broker, versioned by git SHA and tagged with the branch.
 3. **Provider verification** replays every contract the broker holds and
    publishes the results back. Without this step the gate has nothing to read.
-4. **`can-i-deploy`** asks the only question that matters: given everything
-   already running in `production`, is *this* version safe to put next to it?
-5. **Deploy** (mocked — there is nothing here to ship).
-6. **Record the deployment**, so the *next* `can-i-deploy` has something true
-   to reason about. Skipping this is the most common way a working setup rots.
+4. **Gate the providers.** `can-i-deploy` asks the only question that matters:
+   given everything already running in `production`, is *this* version safe to
+   put next to it?
+5. **Deploy and record the providers** (the deploy is mocked). Recording is
+   what lets step 6 reason about what actually shipped; skipping it is the most
+   common way a working setup rots.
+6. **Gate the consumers**, now against the providers this run just shipped.
+7. **Deploy and record the consumers.**
+
+Steps 4–7 are two phases rather than one, and the ordering is load-bearing —
+see [Deploy providers before consumers](#deploy-providers-before-consumers).
 
 Versions are git SHAs, never `package.json` versions: a broker version has to
 identify exactly one build artefact, and a release version is identical across
@@ -123,7 +129,7 @@ pnpm demo:mqtt      # a real message across a real MQTT broker
 | `contract-tests.yml` | push, PR | The full loop against a throwaway broker, run **twice** so the second pass has recorded deployments. Needs no secrets, so it works on a fork. |
 | `consumer.yml` | push, PR | Consumer tests always; publishes when a broker is configured. |
 | `provider.yml` | push, PR | Verification against contracts pulled from the broker, results published back. |
-| `can-i-deploy.yml` | after `provider` succeeds on `main` | The gate, then the deploy, then the deployment record. |
+| `can-i-deploy.yml` | after `provider` succeeds on `main` | The gate, in two phases: providers deployed and recorded first, then consumers. |
 
 The ephemeral broker in `contract-tests.yml` cannot replace the other three: it
 only ever knows about one commit, so its `can-i-deploy` cannot tell you whether
@@ -171,8 +177,17 @@ That is the gate being right, not being broken. The provider passes its own
 check, because it is verified against the consumer version already in
 production. Deploy and record the providers first, and the consumers then pass.
 
-`can-i-deploy.yml` currently gates all four participants and deploys them
-together, which works only while pact content does not change.
+So both `can-i-deploy.yml` and `full-loop.sh` run in two phases: gate, deploy
+and record the providers, then gate, deploy and record the consumers. Rolling
+the provider out first is not a workaround for the gate — it is what a
+backward-compatible change actually requires, and the gate is the thing that
+stops you doing it in the wrong order by accident.
+
+Gating all four together and deploying them in one step is the obvious design,
+and it works right up until the first commit that changes a contract.
+
+When a phase does block, `can-i-deploy.yml` takes a `participant` input on
+`workflow_dispatch` so you can ship one side on its own.
 
 ## Layout
 

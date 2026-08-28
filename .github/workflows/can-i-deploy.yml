@@ -78,26 +78,76 @@ jobs:
       - name: Ensure environments exist
         run: ./scripts/create-environments.sh
 
-      # The gate. Non-zero exit stops the job, and therefore the deploy below.
-      - name: can-i-deploy
-        run: ./scripts/can-i-deploy.sh "${{ inputs.participant }}" "$ENVIRONMENT"
-
-      - name: Deploy
-        run: |
-          echo "Deploying $(git rev-parse --short=12 HEAD) to $ENVIRONMENT"
-          echo "(mock — this repo has nothing to deploy)"
-
-      # Only after a successful deploy. Recording it beforehand would tell the
-      # broker something untrue the moment a deploy fails, and every later
-      # can-i-deploy would reason from that lie.
+      # Providers first, consumers second, and the ordering is the whole point.
       #
-      # Skipping this step entirely is the most common way a working setup
-      # rots: can-i-deploy quietly stops having anything to compare against.
-      - name: Record deployments
+      # A consumer that adds an interaction changes its pact's *content*, which
+      # makes it a new pact version. The provider currently in production has
+      # never been verified against that version, so the gate refuses the
+      # consumer — correctly, and confusingly if you were expecting one atomic
+      # release. Gating all four together and deploying them in one step only
+      # works while pact content never changes, which is to say: until the
+      # first interesting commit.
+      #
+      # Rolling the provider out first is not a workaround for the gate. It is
+      # what a backward-compatible change actually requires, and the gate is
+      # the thing that stops you doing it in the wrong order by accident.
+      #
+      # Each phase records its deployments before the next phase is gated, so
+      # the consumer check reasons about the providers this run just shipped.
+
+      # --- Phase 1: providers ------------------------------------------------
+      - name: can-i-deploy → providers
+        if: ${{ !inputs.participant }}
         run: |
-          for participant in web-dashboard telemetry-processor orders-api device-gateway; do
+          source ./scripts/_common.sh
+          for participant in "${PROVIDERS[@]}"; do
+            ./scripts/can-i-deploy.sh "$participant" "$ENVIRONMENT"
+          done
+
+      # Recording happens only after the deploy it describes. Recording it
+      # beforehand would tell the broker something untrue the moment a deploy
+      # fails, and every later can-i-deploy would reason from that lie.
+      #
+      # Skipping it entirely is the most common way a working setup rots:
+      # can-i-deploy quietly stops having anything to compare against.
+      - name: Deploy and record providers
+        if: ${{ !inputs.participant }}
+        run: |
+          source ./scripts/_common.sh
+          echo "Deploying providers $(git rev-parse --short=12 HEAD) to $ENVIRONMENT"
+          echo "(mock — this repo has nothing to deploy)"
+          for participant in "${PROVIDERS[@]}"; do
             ./scripts/record-deployment.sh "$participant" "$ENVIRONMENT"
           done
+
+      # --- Phase 2: consumers ------------------------------------------------
+      - name: can-i-deploy → consumers
+        if: ${{ !inputs.participant }}
+        run: |
+          source ./scripts/_common.sh
+          for participant in "${CONSUMERS[@]}"; do
+            ./scripts/can-i-deploy.sh "$participant" "$ENVIRONMENT"
+          done
+
+      - name: Deploy and record consumers
+        if: ${{ !inputs.participant }}
+        run: |
+          source ./scripts/_common.sh
+          echo "Deploying consumers $(git rev-parse --short=12 HEAD) to $ENVIRONMENT"
+          echo "(mock — this repo has nothing to deploy)"
+          for participant in "${CONSUMERS[@]}"; do
+            ./scripts/record-deployment.sh "$participant" "$ENVIRONMENT"
+          done
+
+      # --- One participant, by hand ------------------------------------------
+      # The workflow_dispatch escape hatch, and the thing to reach for when a
+      # phase above has blocked and you need to ship one side on its own.
+      - name: can-i-deploy → ${{ inputs.participant }}
+        if: ${{ inputs.participant }}
+        run: |
+          ./scripts/can-i-deploy.sh "${{ inputs.participant }}" "$ENVIRONMENT"
+          echo "Deploying ${{ inputs.participant }} $(git rev-parse --short=12 HEAD) to $ENVIRONMENT"
+          ./scripts/record-deployment.sh "${{ inputs.participant }}" "$ENVIRONMENT"
 
   explain-skip:
     name: gate skipped
