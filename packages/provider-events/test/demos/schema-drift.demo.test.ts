@@ -1,7 +1,11 @@
 import { Verifier, providerWithMetadata } from '@pact-foundation/pact';
 import { describe, expect, it } from 'vitest';
 
-import { CRITICAL_READING, NORMAL_READING } from '../../src/readings.js';
+import {
+  CRITICAL_READING,
+  DEGRADED_READING,
+  NORMAL_READING,
+} from '../../src/readings.js';
 import {
   buildTelemetryEvent,
   type DeviceTelemetryEvent,
@@ -37,10 +41,22 @@ function verifyWithDrift(
         () => drift(buildTelemetryEvent(CRITICAL_READING)),
         TRANSPORT_METADATA,
       ),
+      // Every message in the contract needs a handler here, not just the ones
+      // a given drift scenario is interesting for. An unhandled message is not
+      // skipped — it verifies against an empty payload and fails — so the two
+      // tests below that assert drift is *missed* would start failing for a
+      // reason that has nothing to do with drift.
+      'device telemetry v1, warning fault on a degraded link':
+        providerWithMetadata(
+          () => drift(buildTelemetryEvent(DEGRADED_READING)),
+          TRANSPORT_METADATA,
+        ),
     },
     stateHandlers: {
       'a controller reporting normal telemetry': async () => undefined,
       'a controller reporting a critical fault on low battery': async () =>
+        undefined,
+      'a controller on a degraded link reporting a warning fault': async () =>
         undefined,
     },
     // Never the broker: these verifications are meant to fail, and publishing

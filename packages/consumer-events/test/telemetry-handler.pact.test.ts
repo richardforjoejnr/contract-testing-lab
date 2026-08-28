@@ -10,6 +10,7 @@ import { handleTelemetry } from '../src/telemetry-handler.js';
 import { telemetryTopic } from '../src/telemetry.js';
 import {
   CONSUMER,
+  DEGRADED_TELEMETRY,
   FAULTED_TELEMETRY,
   NORMAL_TELEMETRY,
   PACT_DIR,
@@ -160,6 +161,61 @@ describe('telemetry-processor ← device-gateway', () => {
         expect(snapshot.batteryState).toBe('critical');
         expect(snapshot.linkState).toBe('poor');
         expect(snapshot.activeFaultCodes).toEqual(['MIC_MUTE_STUCK']);
+        expect(snapshot.requiresAttention).toBe(true);
+      });
+  });
+
+  it('handles a warning fault on a degraded link', async () => {
+    // The two interactions above sit at opposite ends of every threshold this
+    // processor has: 87% battery and -58 dBm with no faults, then 7% and
+    // -88 dBm with a critical one. Between them they never once produce
+    // `batteryState: 'low'` or `linkState: 'degraded'`, so half of a
+    // three-branch decision has no contract behind it.
+    //
+    // The shape recorded here is the same as the critical message's, and that
+    // is not what makes this interaction worth having. What makes it worth
+    // having is the provider state: naming "a controller on a degraded link
+    // reporting a warning fault" obliges device-gateway to demonstrate it can
+    // still produce one.
+    //
+    // That obligation is the real protection. `warning` and `critical` are
+    // kept by this processor and `info` is discarded, so a firmware change
+    // that stopped emitting `warning` would strand a live branch of our
+    // routing — with every existing contract staying green, because none of
+    // them ever asked for one.
+    await pact
+      .addAsynchronousInteraction()
+      .given('a controller on a degraded link reporting a warning fault')
+      .expectsToReceive(DEGRADED_TELEMETRY, (builder) => {
+        builder.withMetadata(TRANSPORT_METADATA);
+
+        builder.withJSONContent({
+          ...telemetryEnvelope,
+          batteryPct: integer(18),
+          uptimeSeconds: integer(128_400),
+          signal: {
+            rssiDbm: integer(-78),
+            linkQuality: integer(54),
+          },
+          faults: eachLike(
+            {
+              code: regex(/^[A-Z][A-Z0-9_]{2,39}$/, 'DOOR_SENSOR_INTERMITTENT'),
+              severity: regex(SEVERITY, 'warning'),
+            },
+            1,
+          ),
+        });
+      })
+      .executeTest(async (message) => {
+        const snapshot = handleTelemetry(message.contents.content);
+
+        // Neither end of either band — the cases the other two interactions
+        // cannot reach.
+        expect(snapshot.batteryState).toBe('low');
+        expect(snapshot.linkState).toBe('degraded');
+
+        // A warning is kept, exactly as a critical is. Only `info` is dropped.
+        expect(snapshot.activeFaultCodes).toEqual(['DOOR_SENSOR_INTERMITTENT']);
         expect(snapshot.requiresAttention).toBe(true);
       });
   });
