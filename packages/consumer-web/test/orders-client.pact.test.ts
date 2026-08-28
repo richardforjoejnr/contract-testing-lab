@@ -2,7 +2,8 @@ import { MatchersV3, PactV4, SpecificationVersion } from '@pact-foundation/pact'
 import { describe, expect, it } from 'vitest';
 
 import { OrdersClient } from '../src/orders-client.js';
-import { OrderNotFoundError } from '../src/errors.js';
+import { OrderNotFoundError, OrdersApiError } from '../src/errors.js';
+import type { OrderDraft } from '../src/types.js';
 import { CONSUMER, PACT_DIR, PROVIDER } from './support/pact.js';
 
 const {
@@ -220,6 +221,80 @@ describe('web-dashboard → orders-api', () => {
           expect(orders.every((o) => o.status === 'READY')).toBe(true);
         });
     });
+
+    it('returns an empty list for a customer with no orders', async () => {
+      // The gap `eachLike` leaves behind.
+      //
+      // Every list interaction above uses `eachLike(..., 1)`, which asserts
+      // "an array of at least one of these". That is the right matcher for a
+      // populated list and it says *nothing whatsoever* about the empty case —
+      // so a provider that answered `{ "orders": null }`, or omitted the key,
+      // or returned a bare `[]` at the top level, would satisfy every existing
+      // interaction in this file.
+      //
+      // The dashboard calls `.map` on the result. Any of those three would
+      // crash it on a customer's first visit, which is the one page you can be
+      // certain a new customer sees.
+      //
+      // `orders: []` is a literal, not a matcher: it asserts the array is
+      // present and empty. Same sharp edge as `faults: []` in the telemetry
+      // contract — a literal empty array is a stronger claim than it looks.
+      await pact
+        .addInteraction()
+        .given('customer cus-9001 has no orders')
+        .uponReceiving('a request for all orders belonging to cus-9001')
+        .withRequest('GET', '/customers/cus-9001/orders', (builder) => {
+          builder.headers({ Accept: 'application/json' });
+        })
+        .willRespondWith(200, (builder) => {
+          builder.headers({ 'Content-Type': JSON_CONTENT_TYPE });
+          builder.jsonBody({ orders: [] });
+        })
+        .executeTest(async (mockServer) => {
+          const client = new OrdersClient({ baseUrl: mockServer.url });
+          const orders = await client.listOrdersForCustomer('cus-9001');
+
+          // An empty list, not a throw. The dashboard renders an empty state.
+          expect(orders).toEqual([]);
+        });
+    });
+
+    it('returns an empty list when the status filter matches nothing', async () => {
+      // Shape-identical to the interaction above, and worth its own
+      // interaction anyway, because the question it asks is a different one:
+      // not "what shape is an empty list" but "what does the provider do when
+      // a filter excludes everything".
+      //
+      // 404 and 400 are both defensible answers a provider could drift to, and
+      // both would reach the dashboard as an OrdersApiError thrown from
+      // #expectJson — an error toast where the user should see "no cancelled
+      // orders". Pinning 200 here is what stops that being a silent judgement
+      // call on the provider's side.
+      //
+      // Reuses the three-order state deliberately: none of those three is
+      // CANCELLED, so the filter does real work rather than the state having
+      // been rigged empty.
+      await pact
+        .addInteraction()
+        .given('customer cus-1042 has 3 orders')
+        .uponReceiving('a request for the CANCELLED orders belonging to cus-1042')
+        .withRequest('GET', '/customers/cus-1042/orders', (builder) => {
+          builder.query({ status: 'CANCELLED' });
+          builder.headers({ Accept: 'application/json' });
+        })
+        .willRespondWith(200, (builder) => {
+          builder.headers({ 'Content-Type': JSON_CONTENT_TYPE });
+          builder.jsonBody({ orders: [] });
+        })
+        .executeTest(async (mockServer) => {
+          const client = new OrdersClient({ baseUrl: mockServer.url });
+          const orders = await client.listOrdersForCustomer('cus-1042', {
+            status: 'CANCELLED',
+          });
+
+          expect(orders).toEqual([]);
+        });
+    });
   });
 
   describe('createOrder', () => {
@@ -265,6 +340,66 @@ describe('web-dashboard → orders-api', () => {
 
           expect(accepted.status).toBe('PLACED');
           expect(accepted.id).toMatch(ORDER_ID);
+        });
+    });
+
+    it('is told 400, not 500, when it sends an incomplete draft', async () => {
+      // Note what this interaction does NOT specify: a response body.
+      //
+      // That is the whole point of it. Compare the 404 on getOrder above,
+      // which pins `{ title, detail }` — justified, because the client parses
+      // that body and reads `detail` to populate an empty state. Here the
+      // client does not. It calls `#expectJson`, which for any non-ok response
+      // throws `OrdersApiError(response.status, await response.text())`: the
+      // status is read, the body is carried around as an opaque string.
+      //
+      // So the status code is the entire dependency, and asserting a shape for
+      // the body would be over-specification of exactly the kind that made the
+      // build red in docs/05 — pinning provider output nobody consumes, and
+      // handing the provider a fixture it must not touch.
+      //
+      // What is worth pinning: a malformed body gets a 400. A provider that
+      // drifted to a 500 here would be telling every client this is a server
+      // fault and therefore retryable, which is the opposite of true.
+      //
+      // The cast is deliberate. OrderDraft makes storeId required, so this
+      // request cannot arise from correct consumer code — it is the shape of a
+      // dashboard bug, and the contract states what the provider owes us when
+      // we have one.
+      await pact
+        .addInteraction()
+        .given('customer cus-1042 exists and can place orders')
+        .uponReceiving('a new order that is missing its storeId')
+        .withRequest('POST', '/orders', (builder) => {
+          builder.headers({
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          });
+          builder.jsonBody({
+            customerId: string('cus-1042'),
+            lines: eachLike(
+              { sku: string('SKU-77120'), quantity: integer(2) },
+              1,
+            ),
+          });
+        })
+        .willRespondWith(400)
+        .executeTest(async (mockServer) => {
+          const client = new OrdersClient({ baseUrl: mockServer.url });
+
+          const draft = {
+            customerId: 'cus-1042',
+            lines: [{ sku: 'SKU-77120', quantity: 2 }],
+          } as OrderDraft;
+
+          // One call, not two assertions each issuing their own request:
+          // the mock would happily serve both, and a contract test that sends
+          // a request it has no reason to send is a contract test lying about
+          // what the consumer does.
+          const error = await client.createOrder(draft).catch((e: unknown) => e);
+
+          expect(error).toBeInstanceOf(OrdersApiError);
+          expect((error as OrdersApiError).status).toBe(400);
         });
     });
   });
