@@ -24,6 +24,167 @@ The HTTP pair and the message pair are deliberately unrelated. The MQTT half
 exists because message pacts are where most teams' understanding stops, and
 where the limitations are least well advertised.
 
+## How contract testing works with Pact
+
+The consumer and the provider never run in the same test. The consumer records
+what it needs into a file, the broker carries that file between the two builds,
+and the provider replays it against the real code. The broker then holds enough
+evidence to answer "is this version safe to deploy?".
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CT as Consumer test<br/>(Vitest + Pact)
+    participant MK as Pact mock<br/>(stands in for provider)
+    participant PF as pacts/*.json<br/>(the contract)
+    participant BR as Pact Broker
+    participant PT as Provider test<br/>(Pact Verifier)
+    participant PR as Real provider code
+    participant PL as Deploy pipeline
+
+    rect rgba(66, 135, 245, 0.12)
+    Note over CT,PF: Consumer side — pnpm test:consumers
+    CT->>MK: Declare interaction: provider state, request, expected response with matchers
+    CT->>MK: Run the real client code against the mock
+    MK-->>CT: Canned response, test asserts on what the client returns
+    MK->>PF: Write every interaction that was exercised
+    end
+
+    rect rgba(245, 166, 35, 0.12)
+    Note over PF,BR: Publish — pnpm pact:publish
+    PF->>BR: pact-broker publish, consumer version = git SHA, plus branch
+    end
+
+    rect rgba(46, 160, 67, 0.12)
+    Note over BR,PR: Provider side — pnpm test:providers
+    PT->>BR: Fetch pacts for mainBranch, matchingBranch, deployedOrReleased
+    BR-->>PT: Pact files to verify
+    PT->>PR: Run the state handler, then replay each recorded request
+    PR-->>PT: Actual response, compared against the matchers
+    PT->>BR: Publish pass or fail for provider version = git SHA
+    end
+
+    rect rgba(163, 113, 247, 0.12)
+    Note over BR,PL: The gate — providers first, then consumers
+    PL->>BR: can-i-deploy for each provider to production
+    BR-->>PL: Yes or no, from the verification matrix
+    PL->>BR: record-deployment for each provider
+    PL->>BR: can-i-deploy for each consumer to production
+    BR-->>PL: Yes or no
+    PL->>BR: record-deployment for each consumer
+    end
+```
+
+### Step by step
+
+The numbers match the arrows in the diagram.
+
+**Consumer side** — `pnpm test:consumers`
+
+1. **Declare the interaction.** The consumer test states one thing it needs
+   from the provider: a provider state (`given`), a request, and the response
+   it expects. From `packages/consumer-web/test/orders-client.pact.test.ts`:
+
+   ```ts
+   await pact
+     .addInteraction()
+     .given('an order ord-8f3a91 exists for customer cus-1042')
+     .uponReceiving('a request for order ord-8f3a91')
+     .withRequest('GET', '/orders/ord-8f3a91', …)
+     .willRespondWith(200, (builder) => {
+       builder.jsonBody({
+         id: regex(ORDER_ID, 'ord-8f3a91'),
+         totalPence: integer(5100),
+         …
+       });
+     });
+   ```
+
+   The matchers (`regex`, `integer`, `like`, `eachLike`) say "this shape and
+   type", not "this exact value".
+2. **Run the real client.** Pact starts a local mock server and the test points
+   the real `OrdersClient` at it. Nothing is stubbed inside the client, so the
+   request Pact records is the request the client really sends.
+3. **Assert.** The mock returns the example response and the test checks what
+   the client hands back. If the client sends anything other than the declared
+   request, the mock rejects it and the test fails.
+4. **Write the pact file.** When the tests pass, Pact writes one JSON file per
+   consumer–provider pair into `pacts/`:
+
+   | File | Interactions | Type |
+   |---|---|---|
+   | `web-dashboard-orders-api.json` | 8 | `Synchronous/HTTP` |
+   | `telemetry-processor-device-gateway.json` | 3 | `Asynchronous/Messages` |
+
+   Each interaction holds the provider state, the request, the example
+   response, and the matching rules. Trimmed:
+
+   ```json
+   {
+     "description": "a request for the missing order ord-000000",
+     "providerStates": [{ "name": "no order exists with id ord-000000" }],
+     "request": { "method": "GET", "path": "/orders/ord-000000" },
+     "response": {
+       "status": 404,
+       "body": { "content": { "title": "Order not found", "detail": "…" } },
+       "matchingRules": { "body": { "$.title": { "matchers": [{ "match": "type" }] } } }
+     }
+   }
+   ```
+
+**Publish** — `pnpm pact:publish`
+
+5. **Upload to the broker.** `scripts/publish-pacts.sh` runs
+   `pact-broker publish pacts/ --consumer-app-version <git SHA> --branch <branch>`.
+   The broker now knows "version `abc123` of `web-dashboard` on branch `main`
+   expects this". If the pact content is unchanged from a previous version, the
+   broker reuses the existing verification results.
+
+**Provider side** — `pnpm test:providers`
+
+6. **Ask the broker which pacts to verify.** The verifier sends three consumer
+   version selectors (`packages/provider-api/test/support/verification-source.ts`):
+   `mainBranch` (what main expects), `matchingBranch` (a consumer branch with
+   the same name as this one), and `deployedOrReleased` (what is running now).
+7. **Receive the pacts.** New, never-verified expectations come back marked
+   pending, so they are reported without failing the provider's build.
+8. **Replay against the real provider.** The test boots the real NestJS app on
+   a random port. For each interaction, the verifier first calls the state
+   handler named in the pact (`test/support/provider-states.ts` seeds the
+   repository), then sends the recorded request.
+9. **Compare.** The actual response is checked against the matching rules.
+   The example values are ignored wherever a matcher covers them.
+10. **Publish the result.** With `CI=true`, the verifier posts pass or fail to
+    the broker against the provider's git SHA and branch, with a link to the
+    build. Locally the result is not published, so a laptop run cannot change
+    what the gate sees.
+
+**The gate** — `pnpm pact:can-i-deploy`, `pnpm pact:record-deployment`
+
+11. **Ask about the providers.** `pact-broker can-i-deploy --pacticipant
+    orders-api --version <git SHA> --to-environment production`.
+12. **Get the answer.** The broker looks up every consumer version recorded in
+    `production` and checks there is a passing verification between it and this
+    provider version. Exit code 0 means deploy; non-zero blocks the pipeline.
+13. **Record the provider deployment.** After the deploy,
+    `pact-broker record-deployment` tells the broker this version is now in
+    `production`. Without it, the next check reasons about stale data.
+14. **Ask about the consumers**, now against the providers just recorded.
+15. **Get the answer.**
+16. **Record the consumer deployment.**
+
+### Where the message pact differs
+
+The MQTT pair follows the same sixteen steps with two substitutions, because
+there is no HTTP call to intercept:
+
+| Step | HTTP (`web-dashboard` → `orders-api`) | Message (`telemetry-processor` ← `device-gateway`) |
+|---|---|---|
+| 2–3 | Real client calls a mock server | Pact builds the expected message and passes it to the real `handleTelemetry` |
+| 8–9 | Verifier sends requests to the running app | Verifier calls `buildTelemetryEvent`, the function the real publisher uses, and compares its output and transport metadata (topic, QoS, retain) |
+
+Neither side connects to an MQTT broker during the contract tests.
+
 ## Quick start
 
 Requires Node 22+ (`.nvmrc`), pnpm, and Docker.
